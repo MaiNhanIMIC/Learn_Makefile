@@ -52,8 +52,9 @@ program: lib1.o lib2.o main.o
 %.o: %.c
     gcc -c $^ -o $@
 ```
-- `$^` : là danh sách dependencies
-- `$@` : là targer
+- `$^`: là danh sách dependencies
+- `$<`: là dependency ở vị trí đầu tiên
+- `$@`: là targer
 ### 4.3. Chúng ta có thể print log để debug trong Makefile
 ```make
 program: lib1.o lib2.o main.o
@@ -80,6 +81,12 @@ debug:
     $(info objects: $(OBJS))
 ```
 - `$(wildcard *.c)` tìm tất cả các file `.c` trong thư mục hiện tại.
+    + `wildcard` là hàm nội bộ của makefile, dùng để tìm file trong filesystem theo pattern
+    + cú pháp:
+    ```make
+    $(wildcard pattern)
+    ``` 
+    + `pattern` là format cần tìm.VD: `$(wildcard *.c)` là tìm tất cả các file.c
 - Gán danh sách đó cho biến `SRCS`.
 - `$(SRCS:.c=.o)` chuyễn `lib1.c lib2.c main.c` thành `lib1.o lib2.o main.o`
 
@@ -119,3 +126,102 @@ lib1.o: lib1.c
 - trong `main.c` có `#include "lib2.h"` trong lib2.h của `#include "lib1.h"` do đó depedencies của `main.o` là `main.c`, `lib2.h` và `lib1.h`
 - trong `lib1.c` không có include thư viện nào cả, nên nó chỉ có depedency một file `lib1.c' thôi
 - Cuối cùng là sử dụng `-include *.d` để thêm tất cả các file.d vào khi chạy make
+### 4.6. Gom các file đã biên dịch vào folder `build`
+```make
+CC=gcc
+BUILD_DIR=build
+SRCS=$(wildcard *.c)
+OBJS=$(patsubst %.c, $(BUILD_DIR)/%.o, $(SRCS))
+FLAG=-MMD
+program: $(OBJS)                            # các objects phải nằm trong build
+	$(info link all object files to $@)
+	$(CC) $(OBJS) -o $@
+
+$(BUILD_DIR)/%.o: %.c                       # target được lưu trong build
+	$(info build $< to $@)
+	$(CC) -c $(FLAG) $< -o $(BUILD_DIR)/$@  # tạo ra những file .o trong build
+
+clear: 
+	rm $(BUILD_DIR)/*
+
+-include $(BUILD_DIR)/*.d
+```
+- Cách hoạt động của `patsubst`: 
+    + Nó là một hàm nội bộ trong makefile
+    + Cú pháp:
+        ```make
+        $(patsubst pattern, replacement, text)
+        ```
+        + `pattern`: Mẫu so khớp, phải chứa `%`
+        + `replacement`: Mẫu mới, cũng phải chứa `%` để giữ phần biến
+        + `text`: Danh sách từ cần xử lý (tách nhau bằng dấu cách)
+    + Cách nó hoạt động:
+        + Hàm duyệt từng từ trong `text`:
+            + Nếu một từ khớp với pattern (với % là phần khớp bất kỳ), thì:
+                + Lấy phần `%` tương ứng trong từ gốc
+                + Thay thế vào % trong `replacement`
+            + Nêu không khớp thì giữ nguyên
+    ```make
+    SRCS=$(wildcard *.c)
+    OBJS=$(patsubst %.c, $(BUILD_DIR)/%.o, $(SRCS))
+    ```
+    + Ta có SRCS là `lib1.c lib2.c main.c`
+    +  `text` sẽ là:
+        + `lib1`.c 
+        + `lib2`.c 
+        + `main`.c
+    + `pattern` là `%.c` --> Phần tô đậm là `%`
+    + Vậy thì các phần trong text sẽ được thay thế theo `replacement` (`build/%.o`) --> kết quả của `patsubtr` sẽ là `build/lib1.o build/lib2.o build/main.o`
+### 4.6. Làm việc với multi-dir project
+Tổ chức thư mục như sao:
+```bash
+D:.
+│   main.c
+│   Makefile
+│   README.md
+├───build
+├───lib1
+│   ├───inc/lib1.h
+│   └───src/lib1.c
+└───lib2
+    ├───inc/lib2.h
+    └───src/lib2.c
+```
+- Nhận xét:
+    + Trong cây thư mục trên ta thấy các source (các file.c) nằm trong các thư mục sao:
+        + `.`
+        + `lib1/src`
+        + `lib2/src`
+        ```make
+        SRCS_DIR=. lib1/src lib2/src
+        ```
+- Sửa `Makefile` lại như sau:
+```make
+CC=gcc
+SRCS_DIR=. lib1/src lib2/src
+INCS_DIR= lib1/inc lib2/inc
+BUILD_DIR=build
+SRCS=$(foreach dir, $(SRCS_DIR), $(wildcard $(dir)/*.c))
+OBJS=$(patsubst %.c, $(BUILD_DIR)/%.o, $(SRCS))
+FLAG=-MMD $(foreach inc_dir, $(INCS_DIR), -I$(inc_dir))
+program: $(OBJS)
+	$(info link all object files to $@)
+	$(CC) $(OBJS) -o $@
+
+$(BUILD_DIR)/%.o: %.c
+	$(info build $< to $@)
+	mkdir -p $(foreach dir, $(SRCS_DIR), $(BUILD_DIR)/$(dir))
+	$(CC) -c $(FLAG) $< -o $@
+clear: 
+	rm $(BUILD_DIR)/*
+
+-include $(BUILD_DIR)/*.d
+```
+- Giải thích `foreach`: là một hàm trong những hàm mạnh nhất của `Makefile`, cho phép lặp qua danh sách và sử lý từng phần tử một cách linh hoạt
++ cú pháp:
+    ```make
+    $(foreach var, list, text)
+    ```
+    + `var`: tên biến tạm được sử dụng trong mỗi vong lặp 
+    + `list`: Danh sách các phần tử (cách nhau bởi dấu cách)
+    + `text`: Nội dung được thực hiện với mỗi phần tử trong `list` (dung `$(var)`)
